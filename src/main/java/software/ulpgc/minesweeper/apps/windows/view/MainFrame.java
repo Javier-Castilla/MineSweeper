@@ -44,7 +44,7 @@ public class MainFrame extends JFrame {
 
     private JPanel createToolbar() {
         JPanel panel = new JPanel();
-        JButton button = new JButton("Return");
+        JButton button = new JButton("Back");
         panel.add(button);
         button.addActionListener(x -> {
             commands.get("finish").execute();
