@@ -1,33 +1,35 @@
 package software.ulpgc.minesweeper.apps.windows.view;
 
 import software.ulpgc.minesweeper.apps.windows.view.customization.CustomFont;
-import software.ulpgc.minesweeper.architecture.view.MainMenuPanel;
+import software.ulpgc.minesweeper.architecture.view.MenuDisplay;
 
 import javax.swing.*;
 import java.awt.*;
 
-public class SwingMainMenuPanel extends JPanel implements MainMenuPanel {
+public class SwingMenuDisplay extends JPanel implements MenuDisplay {
 
     private final JButton startButton;
     private final SwingLevelDialog difficultyDialog;
 
-    public SwingMainMenuPanel() {
+    public SwingMenuDisplay() {
         setLayout(new BorderLayout());
         add(BorderLayout.NORTH, createTitleDisplay());
         add(BorderLayout.CENTER, createCenterPanel(this.difficultyDialog = createDifficultyDialog()));
         add(BorderLayout.SOUTH, toolbar(this.startButton = createStartButton()));
     }
 
-    private JPanel createCenterPanel(SwingLevelDialog difficultyDialog) {
+    private JPanel createCenterPanel(SwingLevelDialog levelDialog) {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.add(difficultyDialog);
+        panel.add(levelDialog);
         return panel;
     }
 
     private JPanel toolbar(JButton button) {
-        JPanel panel = new JPanel();
-        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
+        JPanel panel = new JPanel(new GridLayout(0, 1, 0, 0));
+        JPanel mediumPanel = new JPanel();
+        mediumPanel.setBackground(new java.awt.Color(0, 144, 0));
+        panel.add(mediumPanel);
         panel.add(button);
         return panel;
     }
@@ -65,14 +67,8 @@ public class SwingMainMenuPanel extends JPanel implements MainMenuPanel {
     }
 
     @Override
-    public MainMenuPanel showPanel() {
+    public void showPanel() {
         setVisible(true);
-        return this;
     }
 
-    @Override
-    public MainMenuPanel hidePanel() {
-        setVisible(false);
-        return this;
-    }
 }

@@ -1,72 +1,114 @@
 package software.ulpgc.minesweeper.architecture.control;
 
-import software.ulpgc.minesweeper.apps.windows.view.customization.Color;
 import software.ulpgc.minesweeper.architecture.model.builders.PaintOrderBuilder;
 import software.ulpgc.minesweeper.architecture.model.*;
+import software.ulpgc.minesweeper.architecture.model.builders.PositionAdapter;
 import software.ulpgc.minesweeper.architecture.view.*;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.IntStream;
-import java.util.stream.Stream;
+import static software.ulpgc.minesweeper.architecture.model.Button.LEFT_BUTTON;
+import static software.ulpgc.minesweeper.architecture.model.Button.RIGHT_BUTTON;
+import static software.ulpgc.minesweeper.architecture.view.BoardDisplay.CELL_SIZE;
 
 public class GamePresenter {
     private Game game;
+    private GameReplayer gameReplayer;
     private final GameDisplay gameDisplay;
-    private final BoardExplorer boardExplorer;
-    private final AtomicInteger counter = new AtomicInteger(0);
+    private final Object lock = new Object();
+    private Thread replayThread;
+    private volatile boolean running = false;
 
-
-    public GamePresenter(GameDisplay gameDisplay) {
+    public GamePresenter(GameDisplay gameDisplay, GameReplayer gameReplayer) {
         this.gameDisplay = gameDisplay;
-        this.boardExplorer = new BoardExplorer();
+        this.gameReplayer = gameReplayer;
         this.gameDisplay.boardDisplay().on(click());
+    }
+
+    public void showGameReplay() {
+        synchronized (lock) {
+            if (gameReplayer.replayState().equals(GameReplayer.ReplayState.STARTED)) return;
+            gameReplayer = gameReplayer.defineGame(game);
+            running = true;
+        }
+
+        replayThread = new Thread(() -> {
+            for (int i = 0; i < game.interactions().size(); i++) {
+                synchronized (lock) {
+                    if (!running) break;
+                    gameReplayer = gameReplayer.execute();
+                }
+
+                gameDisplay.boardDisplay().paint(PaintOrderBuilder.boardPaintOrder(gameReplayer.game().board(), CELL_SIZE).toArray(BoardDisplay.PaintOrder[]::new));
+            }
+
+            synchronized (lock) {
+                gameReplayer = gameReplayer.reset();
+            }
+        });
+        replayThread.start();
+    }
+
+    public void stopReplay() {
+        synchronized (lock) {
+            running = false;
+        }
+
+        if (replayThread != null) {
+            try {
+                replayThread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        synchronized (lock) {
+            gameReplayer = new GameReplayer.Builder().build();
+        }
     }
 
     public void show(Game game) {
         this.game = game;
+        gameDisplay.counterDisplay().show(BoardExplorer.countRemainMines(game.board()));
+        gameDisplay.resetGame();
         gameDisplay.boardDisplay().adjustDimensionTo(this.game.board().level().size());
-        gameDisplay.stopGame();
-        gameDisplay.boardDisplay().paint(
-                IntStream.range(0, this.game.board().level().width() * this.game.board().level().height())
-                        .mapToObj(i ->   PaintOrderBuilder.create().withPosition(
-                                new Cell.Position(
-                                        (i % game.board().level().width()) * BoardDisplay.CELL_SIZE,
-                                        (i / game.board().level().width()) * BoardDisplay.CELL_SIZE
-                                )).withColor(Color.UnopenedCell).build()
-                        ).toArray(BoardDisplay.PaintOrder[]::new)
-        );
+        gameDisplay.boardDisplay().paint(PaintOrderBuilder.boardPaintOrder(game.board(), CELL_SIZE).toArray(BoardDisplay.PaintOrder[]::new));
     }
 
     private BoardDisplay.Click click() {
         return (xOffset, yOffset, button) -> {
-            if (game.gameState().equals(Game.GameState.WON) || game.gameState().equals(Game.GameState.LOST)) return;
-            if (game.gameState().equals(Game.GameState.UNBEGUN)) gameDisplay.startGame();
-            Cell.Position position = new Cell.Position(pixelToInteger(xOffset), pixelToInteger(yOffset));
-            game = game.add(new Game.Interaction(position, gameDisplay.chronometer().currentTime()));
-            gameDisplay.boardDisplay().paint(button == 3 ? getFlagPaintOrderArrayFrom(position) : getPaintOrderArrayFrom(position));
-            if (!game.gameState().equals(Game.GameState.BEGUN)) gameDisplay.stopGame();
+            if (endedGame()) return;
+            if (getAction(button) == null) return;
+            Cell.Position position = new Cell.Position(PositionAdapter.adaptToInteger(xOffset, CELL_SIZE), PositionAdapter.adaptToInteger(yOffset, CELL_SIZE));
+            game = game.add(new Game.Interaction(position, getAction(button), gameDisplay.chronometer().currentTime()));
+            gameDisplay.boardDisplay().paint(getPaintOrderArrayFrom(position));
+            gameDisplay.counterDisplay().show(BoardExplorer.countRemainMines(game.board()));
+            checkGameState(game);
         };
     }
 
-    private BoardDisplay.PaintOrder[] getFlagPaintOrderArrayFrom(Cell.Position position) {
-        return new BoardDisplay.PaintOrder[]{PaintOrderBuilder.create().withPosition(integerToPixelPosition(position)).withColor(Color.UnopenedCell).withFlag(true).build()};
+    private void checkGameState(Game game) {
+        if (!game.gameState().equals(Game.GameState.BEGUN)) gameDisplay.stopGame();
+        switch (game.gameState()) {
+            case WON -> gameDisplay.showWinDisplay();
+            case LOST -> gameDisplay.showLostDisplay();
+        }
+    }
+
+    private Game.Action getAction(int button) {
+        return switch (button) {
+            case LEFT_BUTTON -> Game.Action.OPEN;
+            case RIGHT_BUTTON -> Game.Action.FLAG;
+            default -> null;
+        };
+    }
+
+    private boolean endedGame() {
+        if (game.gameState().equals(Game.GameState.UNBEGUN)) gameDisplay.startGame();
+        return game.gameState().equals(Game.GameState.WON) || game.gameState().equals(Game.GameState.LOST);
     }
 
     private BoardDisplay.PaintOrder[] getPaintOrderArrayFrom(Cell.Position position) {
-        boardExplorer.exploreFrom(this.game.board(), position);
-        return !game.board().hasMineIn(position) ?
-                Stream.of(
-                        PaintOrderBuilder.safeCell(boardExplorer, BoardDisplay.CELL_SIZE),
-                                PaintOrderBuilder.edgeCell(boardExplorer, game, BoardDisplay.CELL_SIZE)
-                        ).flatMap(s -> s).toArray(BoardDisplay.PaintOrder[]::new) :
-                PaintOrderBuilder.mineCell(game.board().mines(), BoardDisplay.CELL_SIZE).toArray(BoardDisplay.PaintOrder[]::new);
-    }
-
-    private Cell.Position integerToPixelPosition(Cell.Position p) {
-        return new Cell.Position(p.x() * BoardDisplay.CELL_SIZE, p.y() * BoardDisplay.CELL_SIZE);
-    }
-
-    private static int pixelToInteger(int offset) {
-        return offset / BoardDisplay.CELL_SIZE;
+        return PaintOrderBuilder.boardPaintOrder(
+                game.board(), CELL_SIZE).toArray(BoardDisplay.PaintOrder[]::new
+        );
     }
 }
